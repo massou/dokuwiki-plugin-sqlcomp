@@ -1,0 +1,7 @@
+base   sqlcomp
+author Oliver Geisen
+email  oliver@rehkopf-geisen.de
+date   2017-08-17
+name   sqlcomp plugin
+desc   Render result of SQL-query as table
+url    https://www.dokuwiki.org/plugin:sqlcomp

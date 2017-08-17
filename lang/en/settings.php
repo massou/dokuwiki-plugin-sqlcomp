@@ -1,10 +1,14 @@
 <?php
+<?php
 /**
- * German language file for gallery plugin
+ * english language file for sqlcomp plugin
  *
- * @author Andreas Gohr <andi@splitbrain.org>
+ * @author Oliver Geisen <oliver@rehkopf-geisen.de>
  */
 
-$lang['default_cache_timeout']  = 'Standard-Timeout (in Sekunden) für den Ergebnis-Cache der SQL-Abfrage';
-$lang['locale'] = 'Verbindungs-Locale';
+// keys need to match the config setting name
 
+$lang['default_cache_timeout']  = 'Invalidate cached SQL-results after given time (seconds)';
+$lang['sql_locale'] = 'SQL-Server connection locale (for result formatting and dates)';
+
+//Setup VIM: ex: et ts=4 :
