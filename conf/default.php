@@ -1,10 +1,11 @@
 <?php
 /**
- * Options for the gallery plugin
+ * Default settings for the sqlcomp plugin
  *
- * @author Dmitry Baikov <dsbaikov@gmail.com>
+ * @author Oliver Geisen <oliver@rehkopf-geisen.de>
  */
-
 $conf['default_cache_timeout']  = 3600;
-$conf['locale'] = 'de_DE';
+$conf['sql_locale'] = 'de_DE';
+$conf['dbaliases'] = '';
+$conf['show_diffs'] = 0;
 

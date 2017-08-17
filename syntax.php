@@ -1,577 +1,491 @@
 <?php
-// vim: set sw=2 ts=2 enc=utf-8 syntax=php :
-
 /**
- * sqlcomp plugin for DokuWiki
+ * DokuWiki Plugin sqlcomp (Syntax Component)
  *
- * @license   GPL 2 (http://www.gnu.org/licenses/gpl.html)
- * @author    Christoph Lang <calbity@gmx.de>
- *            (modified by Oliver Geisen <oliver.geisen@kreisbote.de>
- * @link			http://www.dokuwiki.org/plugin:tutorial
- *
- * Usage:
- * [[mysql:server:username:password:database|query|refresh]]
- *   or
- * [[PROFILE|query|refresh]]
- *   where PROFILE is one of config.php (which is much more safe)
+ * @license GPL 2 http://www.gnu.org/licenses/gpl-2.0.html
+ * @author  Oliver Geisen <oliver@rehkopf-geisen.de>
+ * @author  Christoph Lang <calbity@gmx.de>
  */
+
 // must be run within Dokuwiki
 if (!defined('DOKU_INC')) die();
 
-if (!defined('DOKU_PLUGIN')) define('DOKU_PLUGIN', DOKU_INC . 'lib/plugins/');
-require_once(DOKU_PLUGIN.'syntax.php');
- 
-/**
- * All DokuWiki plugins to extend the parser/rendering mechanism
- * need to inherit from this class
- */
 class syntax_plugin_sqlcomp extends DokuWiki_Syntax_Plugin {
-
-  private $sPath = "sqlcomp/"; # relative to $conf['cachedir'] (DOKU_INC/data/cache)
-  private $sConfig; # path will be set by constructor
- 
-  /**
-   * Layout
-   */
-  private $aMessages = array(
-    "error" => "<div id=\"error\" style=\"text-align:center; font-weight: bold; border: 2px solid #0f0;background-color: #f00; padding: 5px; margin: 5px\">%text%</div>\n",
-    "message" => "<div id=\"difference\" style=\"text-align:center; font-weight: bold; border: 2px solid #fd0;background-color: #ffd; padding: 5px; margin: 5px\">%text%</div>\n",
-    "pre" => "<table class=\"inline\">\n",
-    "post" => "</table>\n",
-    "th" => "<th class=\"row%number%\" style=\"text-align:center;%type%\">%text%</th>",
-    "td" => "<td class=\"col%number%\" style=\"%type%\">%text%</td>",
-    "tr" => "<tr class=\"row%number%\" style=\"%type%\">%text%</tr>\n",
-    "same" => "",
-    "new" => "border:2px solid green;",
-    "old" => "color:#a0a0a0; text-decoration:line-through;",
-    "deleted" => "background:red; text-decoration:line-through;",
-    "changed" => "background:#F2EA0D;",
-  );
-
-  /**
-   * Default Language - German
-   */
-  private $aString = array(
-    //Number of affected Rows
-    "affected" => "Anzahl geänderter Zeilen",
-    //This Database Type is not yet Supported...
-    "nohandler" => "Dieser Datenbanktyp wird (noch) nicht unterstützt...",
-    //There are some differences in the table!
-    "difference" => "Es wurden Unterschiede in den Tabellen festgestellt!",
-    //Everything is allright.
-    "same" => "Alles in Ordnung.",
-    //The resultset is empty.
-    "empty" => "Das Resultset ist leer.",
-    //An unkown error occured!
-    "problem" => "Es ist ein unbekanntes Problem aufgetreten!",
-		//An SQL-Error occured during query
-		"sqlerror" => "Die SQL-Abfrage der Datenbank ist fehlerhaft!",
-    //Cache is displayed, but new data could not be retrieved.
-    "cache" => "Cache wird angezeigt, aber neue Daten konnten nicht abgerufen werden.",
-    //Cache was refreshed, or table was collected for the first time.
-    "first" => "Der Cache wurde soeben erneuert, oder die Tabelle wurde das erste Mal abgerufen.",
-    //New data could not be retrieved.
-    "connection" => "Die neuesten Daten konnten nicht abgerufen werden.",
-    //The data is not valid. Please review your connection settings!
-    "wrong" => "Die eingegebenen Daten sind ungültig! Bitte Überprüfen!",
-    //Access denied creating cachedir
-    "mkdir_failed" => "Beim Versuch ein Verzeichnis zu erstellen ist ein Fehler aufgetreten!",
-		"cachewrite_failed" => "Die Cache-Datei konnte nicht gespeichert werden!",
-  );
-
-  private $defaultRefresh = 1;
-
-
-	// ---------------------------------------------------------------------------
-
-  function __construct()
-  {
-    # this is needed because class-props can't be assigned global constants directly (03.08.2013/ogeisen)
-    $this->sConfig = DOKU_PLUGIN . 'sqlcomp/config.php';
-file_put_contents("/tmp/debug", "Add lexer\n", FILE_APPEND);
-  }
-
-  function getInfo()
-  {
-    return array(
-      'author'  => 'Christoph Lang',
-      'email'   => 'calbity@gmx.de',
-      'date'    => '2008-07-10',
-      'name'    => 'SQLCOMP Plugin',
-      'desc'    => 'This plugin let you display reultsets from various databases and show changes.',
-      'url'     => 'http://www.google.de'
-    );
-  }
-
-	/**
-	 * What kind of syntax are we?
-	 */
-	function getType()
-	{
-		return 'substition';
-	}
-
-	/**
-	 * What about paragraphs?
-	 */
-	function getPType()
-	{
-		return 'block';
-	}
-
-	/**
-	 * Where to sort in?
-	 */
-	function getSort()
-	{
-		return 267;
-	}
-
-	/**
-	 * Connect pattern to lexer
-	 */
-	function connectTo($mode)
-	{
-		$this->Lexer->addSpecialPattern('\[\[mysql\:.*?\]\]',$mode,'plugin_sqlcomp');
-/* 
-		if(!file_exists($this->sConfig))
-			$this->_createConfig();  
- 
-		include($this->sConfig);
- 
-		foreach($sqlcomp as $key => $value)
-          #$this->Lexer->addSpecialPattern('\[\['.$key.'.*?\]\]', $mode, 'plugin_sqlcomp');
-					#KB IMPORTANT CHANGE TO DISTINGUISH BETWEEN LINKS AND CONFIGS
-          $this->Lexer->addSpecialPattern('\[\['.$key.'\|.*?\]\]', $mode, 'plugin_sqlcomp');
-*/
-	}
-
-	/**
-	 * Handle the match
-	 */
-	function handle($match, $state, $pos, &$handler)
-	{
-		$temp = $match;
-		$match = substr($match,2,-2); # remove braces [[, ]]
-
-		$match = explode("|",$match); # split into DBCON, QUERY, CACHE, EXTRA
-
-		# handle DBCON	
-		if(file_exists($this->sConfig)){
-			include($this->sConfig);
-
-		foreach($sqlcomp as $key => $value)
-			if($key == $match[0])
-				$match[0] = $value;
-		}
-
-		// Array ( [pdb] => mysql:kbwm-prod.kreisbote.de:pdb_user:use4db:pdb [jps] => mysql:kbwm-prod.kreisbote.de:jps:sq88ll:journal ) 
-		$MyData =  explode(":",$match[0]);  # adds 5 fields: type:host:user:pass:db
-
-		# replace spaces with ':'
-		for($i=0;$i < 5; $i++)
-			$MyData[$i] = str_replace(" ", ":",$MyData[$i]);
-
-		# handle QUERY
-		$MyData[] = $match[1];
-
-		# handle CACHE
-		if(isset($match[2]))
-			$MyData[] = $match[2];    
-		else
-			$MyData[] = $this->defaultRefresh;  
-
-		# KREISBOTE: handle EXTRA
-		if(isset($match[3]))
-		$MyData[] = explode(',',$match[3]);
-		else
-		$MyData[] = array();
-
-		return $MyData;
-	}
-
-
-	/**
-	 * Create output
-	 */
-	function render($format, &$renderer, $data)
-	{
-		if($format != 'xhtml')
-		{
-			return FALSE;
-		}
-
-		$renderer->doc .= $this->_query($data);
-
-		return TRUE;
-	}
-
-
-	// ---------------------------------------------------------------------------
-	// PRIVATES
-	// ---------------------------------------------------------------------------
-
-  private function _error($text)
-	{
-    return str_replace("%text%",$text,$this->aMessages["error"]);      
-  }
-
-
-	private function _message($text)
-	{
-		return str_replace("%text%",$text,$this->aMessages["message"]);
-	}
-
-
-	private function _debug($data)
-	{
-		$sResponse = "";
-		foreach($data as $key => $value)
-		{
-			$sResponse .= "".$key . "=> " .$value ."<br/>\n";
-		}
-		return $sResponse;
-	}
-
- 
-	private function _verifyInput($data)
-	{
-		if(!is_array($data))
-		{
-			return false;
-		}
-
-		if(count($data) != 8) # KREISBOTE: changed to 8
-		{
-			return false;
-		}
-
-		return true;    
-	}
-
-
- 	private function _cache_load($filename)
-	{
-		$Cache = null;
-		$Update = true;
-
-		if(file_exists($filename))
-		{
-			$Cache = file_get_contents($filename);  
-			$Cache = unserialize($Cache);
-
-			$Update = $Cache["Update"];
-			if(time() > $Update)
-				$Update = true;
-			else
-				$Update = false;
-
-			$Cache = $Cache["Table"];    
-		}        
-
-		return array($Update,$Cache);
-	}
-
-
-	private function _cache_save($filename,$rs,$timestamp)
-	{
-		$timestamp = (time() + ($timestamp*60));
-
-		$Cache["Update"] = $timestamp;
-		$Cache["Table"] = $rs;
-
-		$Cache = serialize($Cache);
-
-		if ( ! $handle = fopen($filename,"w"))
-		{
-			return $this->_error($this->aString["cachewrite_failed"]);
-		}
-		fwrite($handle,$Cache);
-		fclose($handle);
-
-		return TRUE;
-	}
- 
-
-	// ---------------------------------------------------------------------------
-
- 
-	private function _mysql($Server,$User,$Pass,$Database,$Query)
-	{
-		if(!$connection = mysql_connect($Server, $User, $Pass) or false)
-			throw new Exception(mysql_error());
- 
-		if(!mysql_select_db($Database, $connection))
-			throw new Exception(mysql_error());
-
-		// let result be German UTF8 (weekdays, numbers, etc.)
-	# TODO: get configured
-		if(!mysql_query("SET character_set_results = 'utf8', character_set_connection = 'utf8', character_set_client = 'utf8', lc_time_names = 'de_DE'"))
-		{
-			throw new Exception(mysql_error());
-		}
-
-	// transport UTF8 coded strings/fieldnames to server
-#        $Query = utf8_decode($Query); # NOT NEEDED IF SET BEFORE QUERY
-
-	// KREISBOTE: added support for multiple queries
-	// NOTE: only the last query gives the resultset!!!
-	$q = split("\n",$Query);
-	$s = '';
-	$multi = array();
-	foreach($q as $line){
-	  if(preg_match('/[^\\\\];\s*$/',$line)){
-	    $s .= substr(rtrim($line),0,-1);
-	    $multi[] = $s;
-	    $s = '';
-	  } else {
-	    $s .= $line."\n";
-	  }
-	}
-	$multi[] = $s;
-
-		foreach($multi as $q){
-			if(trim($q) == '') continue;  # ignore empty lines
-			$q = preg_replace('/\\\\;/',';',$q);  # un-escape ';' chars in query
-			#DEBUG: print '<pre style="background:yellow">'.$q.'</pre>';
-			$rs = mysql_query($q);
-		}
-
-		# If resultset is simply 'true' than an INSERT or UPDATE operation has done.
-		# In this case, return only the number of rows affected by this operation. 
-
-		$dbArray = array();
-
-		if ($rs === FALSE)
-		{
-			throw new Exception(mysql_error());
-		}
-		elseif($rs === TRUE)
-		{
-			$dbArray[] = array(
-				$this->aString["affected"] => mysql_affected_rows($connection)
-			);
-		}
-		else
-		{
-			while ($row = mysql_fetch_assoc($rs))
-			{
-				$dbArray[] = $row;
-			}
-		}
- 
-		#print '<pre style="background:yellow">'; print_r($dbArray); print '</pre>';
-
-		mysql_close($connection);
-
-		return $dbArray;
-	}
-
-	// ---------------------------------------------------------------------------
-
-
-	/**
-	 *
-	 */
-		/*
-		Array
-		(
-				[0] => mysql
-				[1] => kbwm-prod.kreisbote.de
-				[2] => jps
-				[3] => PASSWORD
-				[4] => journal
-				[5] => 
-		SELECT
-		ORDER BY auftermin.adname DESC,auftrag.kb_modified DESC
-		LIMIT 60;
-				[6] => 3600
-				[7] => nodiff
-		*/
-	private function _query($data,$type=null)
-	{
-		global $conf;
-
-		//return $this->_debug($data);
-
-		if(!$this->_verifyInput($data))
-		{
-			return $this->_error($this->aString["wrong"]);
-		}
-
-		$savedir = $conf['cachedir'].'/'.$this->sPath;
-		if ( ! is_dir($savedir) && ! mkdir($savedir))
-		{
-			return $this->_error($this->aString["mkdir_failed"]);
-		}
- 
-		$filename = $savedir.md5($data[0].$data[1].$data[2].$data[3].$data[4].$data[5]);
-		$Cache = $this->_cache_load($filename);
-
-		$Update = true;
-		if(is_array($Cache))
-		{
-			$Update = $Cache[0];
-			$Cache = $Cache[1];
-		}
-
-		try{  
-			$rs = $this->_mysql($data[1], $data[2], $data[3],$data[4],$data[5]);
-		}
-		catch(Exception $ex)
-		{
-			if($conf['allowdebug'])
-			{
-				$err = $this->aString["problem"];
-				$err .= '<br>"'.$ex->getMessage().'"';
-				$err .= '<br>Aufgetreten in Zeile '.$ex->getLine().' von Datei '.$ex->getFile();
-				return $this->_error($err);
-			}
-
-			return $this->_error($this->aString["sqlerror"].'<br>'.$ex->getMessage());
-		}
-
-		if ($rs === false){
-			return $this->_error($this->aString["empty"] );
-		}
- 
-		if(isset($type) && $type == "csv")
-			return $this->array2csv($rs);
-
-		#KREISBOTE
-		$difference = $this->_difference($Cache,$rs,$data[7]);
-	  $sResponse = $difference[0];    
-
-		if($Update && isset($rs))
-		{
-			$res = $this->_cache_save($filename,$rs,$data[6]);
-			if ($res !== TRUE)
-			{
-				return $res;
-			}
-		}  
-
-		$sResponse .= $difference[1];      
- 
-		return $sResponse;
-	}
-
-
-	/**
-	 *
-	 */
-	function _print($array)
-	{
-		#print '<pre style="background:yellow">';print_r($array); print '</pre>';
-		$i = 0;
-		$th = "";
-		$td = "";
-		$tr = "";
-
-		# KREISBOTE: here we need to handle empty results not as an error
-		if($array[0] === false){
-			return $this->_error($this->aString["problem"]);
-		}
-		if(!isset($array[0])){
-			return ""; # no result
-		}
-
-		$temp = array_keys($array[0]);
-		foreach($temp as $column){
-			if($column == "type")
-				continue;  
-			$th .= str_replace(array("%number%","%text%","%type%"),array(0,$column,""),$this->aMessages["th"]);      
-		}
-		$tr = str_replace(array("%number%","%text%","%type%"),array(0,$th,""),$this->aMessages["tr"]);
-
-		foreach($array as $row) {
-
-			$j = 0;
-			$td = "";
-			if(!isset($row["type"]))
-				$row["type"] = $this->aMessages["same"];
-
-			foreach($row as $key => $Value){          
-				if($key == "type")
-					continue;  
-				$td .= str_replace(array("%number%","%text%","%type%"),array($j,$Value,$row["type"]),$this->aMessages["td"]);
-				$j++;            
-			}
-			$tr .= str_replace(array("%number%","%text%","%type%"),array($i,$td,$row["type"]),$this->aMessages["tr"]);
-			$i++;          
-		}
-
-		$sResponse = $this->aMessages["pre"];
-		$sResponse .= $tr;        
-		$sResponse .= $this->aMessages["post"];
-
-		return $sResponse;
-	}
- 
-	function _difference($Cache,$New,$opts)
-	{
-		if(in_array('nodiff',$opts))
-			$Cache = $New;
- 
-		if($New == $Cache){
-	      # KREISBOTE: doppelt? lieber keine "Alles in Ordnung" meldung...
-              return array($this->_print($New),"");
-#              return array($this->_print($New),$this->_message($this->aString["same"]));
+    /**
+     * @return string Syntax mode type
+     */
+    public function getType() {
+        return 'substition';
+    }
+    /**
+     * @return string Paragraph type
+     */
+    public function getPType() {
+        return 'block';
+    }
+    /**
+     * @return int Sort order - Low numbers go before high numbers
+     */
+    public function getSort() {
+        return 267;
+    }
+
+    /**
+     * Connect lookup pattern to lexer.
+     *
+     * @param string $mode Parser mode
+     */
+    public function connectTo($mode) {
+//        $this->Lexer->addEntryPattern('<FIXME>',$mode,'plugin_sqlcomp');
+        $this->Lexer->addSpecialPattern('\[\[mysql\:.*?\]\]', $mode, 'plugin_sqlcomp');
+        $this->Lexer->addSpecialPattern('\[\[mssql\:.*?\]\]', $mode, 'plugin_sqlcomp');
+        $this->Lexer->addSpecialPattern('\[\[oracle\:.*?\]\]', $mode, 'plugin_sqlcomp');
+        $this->Lexer->addSpecialPattern('\[\[sqlite\:.*?\]\]', $mode, 'plugin_sqlcomp');
+        $this->Lexer->addSpecialPattern('\[\[sqlaccess\:.*?\]\]', $mode, 'plugin_sqlcomp');
+        $this->Lexer->addSpecialPattern('\[\[postgresql\:.*?\]\]', $mode, 'plugin_sqlcomp');
+        $this->Lexer->addSpecialPattern('\[\[sqlcsv\:.*?\]\]', $mode, 'plugin_sqlcomp');
+
+        $aliases = $this->_getAliases();
+        if ($aliases) {
+            foreach($aliases as $name => $def) {
+                $this->Lexer->addSpecialPattern('\[\['.$name.'.*?\]\]', $mode, 'plugin_sqlcomp');
             }
- 
-            if(!isset($New) && isset($Cache))
-              return array($this->_print($Cache),$this->_message($this->aString["difference"]));
- 
-            if(isset($New) && !isset($Cache))
-              return array($this->_print($New),$this->_message($this->aString["first"]));
- 
-            if(count($New) <= 0)
-              return array($this->_print($Cache),$this->_message($this->aString["connection"]));
- 
-            $Max = count($Cache);
-            if(count($New) > count($Cache))
-              $Max = count($New);
- 
-            $PrintArray = array();        
- 
-            for($i=0; $i < $Max; $i++){
-              if(isset($Cache[$i]) && !isset($New[$i]))
-                $PrintArray[] = array_merge($Cache[$i],array("type" => $this->aMessages["deleted"]));
- 
-              if(!isset($Cache[$i]) && isset($New[$i]))
-                $PrintArray[] = array_merge($New[$i],array("type" => $this->aMessages["new"]));
- 
-              if(isset($Cache[$i]) && isset($New[$i])){
-                if($Cache[$i] != $New[$i]){
-                  $PrintArray[] = array_merge($Cache[$i],array("type" => $this->aMessages["old"]));
-                  $PrintArray[] = array_merge($New[$i],array("type" => $this->aMessages["changed"]));
-                }else
-                  $PrintArray[] = array_merge($New[$i],array("type" => $this->aMessages["same"]));
- 
-              }                
- 
-            }
- 
-            return array($this->_print($PrintArray),$this->_message($this->aString["difference"]));
- 
+        }
+    }
+
+//    public function postConnect() {
+//        $this->Lexer->addExitPattern('</FIXME>','plugin_sqlcomp');
+//    }
+
+    /**
+     * Handle matches of the sqlcomp syntax
+     *
+     * @param string          $match   The match of the syntax
+     * @param int             $state   The state of the handler
+     * @param int             $pos     The position in the document
+     * @param Doku_Handler    $handler The handler
+     * @return array Data for the renderer
+     */
+    public function handle($match, $state, $pos, Doku_Handler $handler){
+        $data = array();
+
+        $temp = $match;
+        $match = substr($match,2,-2);
+        $match = explode("|",$match); # DBTYPE, DBCONN, QUERY, CACHE, EXTRA
+
+        $sqlcomp = $this->_getAliases();
+        foreach($sqlcomp as $key => $value)
+          if($key == $match[0])
+            $match[0] = $value;
+            
+        $data =  explode(":",$match[0]);
+        $data[] = $match[1];
+        
+        if(isset($match[2]))
+          $data[] = $match[2];
+        else
+          $data[] = $this->getConf('default_cache_timeout');
+
+        if(isset($match[3]))
+            $data[] = $match[3];
+        else
+            $data[] = $this->getConf('show_diffs');
+       
+        return $data;
+    }
+
+    /**
+     * Render xhtml output or metadata
+     *
+     * @param string         $mode      Renderer mode (supported modes: xhtml)
+     * @param Doku_Renderer  $renderer  The renderer
+     * @param array          $data      The data from the handler() function
+     * @return bool If rendering was successful.
+     */
+    public function render($mode, Doku_Renderer $renderer, $data) {
+        if($mode != 'xhtml') return false;
+        $renderer->doc .= $this->_query($data);
+        return true;
     }
 
 
-	function _createConfig(){  
- 
-        $sContent = "";
-        $sContent .= "<?php\n";
-        $sContent .= "//Sample Configfile\n";
-        $sContent .= "//Add as many servers as you want here...\n";
-        $sContent .= '$sqlcomp["localhost"] = "mysql:localhost:root::information_schema";';
-        $sContent .= '$sqlcomp["sampleconnection"] = "sqltype:servername:username:password:database";';
-        $sContent .= "\n?>\n";
- 
-        $handle = fopen($this->sConfig,"w");
-        fwrite($handle,$sContent);
+    //------------------------------------------------------------------------//
+    // SQLCOMP FUNCTONS
+    //------------------------------------------------------------------------//
+
+    private $sPath = "data/cache/sql/";
+    
+    /**
+     * Layout
+     */
+    private $aMessages = array(
+        "error" => "<div id=\"error\" style=\"text-align:center; font-weight: bold; border: 2px solid #0f0;background-color: #f00; padding: 5px; margin: 5px\">%text%</div>\n",
+        "message" => "<div id=\"difference\" style=\"text-align:center; font-weight: bold; border: 2px solid #fd0;background-color: #ffd; padding: 5px; margin: 5px\">%text%</div>\n",
+        "pre" => "<table class=\"inline\">\n",
+        "post" => "</table>\n",
+        //"th" => "<th class=\"row%number%\" style=\"%type%\">%text%</th>",
+        "th" => "<th class=\"row%number%\" style=\"text-align:center;%type%\">%text%</th>",
+        "td" => "<td class=\"col%number%\" style=\"%type%\">%text%</td>",
+        "tr" => "<tr class=\"row%number%\" style=\"%type%\">%text%</tr>\n",
+        "same" => "",
+        "new" => "border:2px solid green;",
+        "old" => "color:#a0a0a0; text-decoration:line-through;",
+        #"deleted" => "border:2px solid red;",
+        "deleted" => "background:red; text-decoration:line-through;",
+        #"changed" => "border:2px solid blue;"
+        "changed" => "background:#F2EA0D;",
+    );
+
+    private function _getAliases() {
+        $aliases = trim($this->getConf('dbaliases'));
+        if ($aliases == '') return;
+
+        $data = array();
+        $aliases = explode("\r", $aliases);
+        foreach($aliases as $rec) {
+            if (substr_count($rec, '=') == 1) {
+                list($name, $def) = explode('=', trim($rec));
+                $data[$name] = $def;
+            }
+        }
+        return($data);
+    }
+
+    private function _error($text){
+      return str_replace("%text%",$text,$this->aMessages["error"]);
+    }
+
+    private function _message($text){
+      return str_replace("%text%",$text,$this->aMessages["message"]);
+    }
+
+    private function _debug($data){
+        $sResponse = "";
+        foreach($data as $key => $value){
+            $sResponse .= "".$key . "=> " .$value ."<br/>\n";
+        }
+        return $sResponse;
+    }
+
+    private function _verifyInput($data){
+      if(!is_array($data))
+        return false;
+      if(count($data) != 8)
+        return false;
+      return true;    
+    }
+    
+    private function _load($filename){
+      
+        $Cache = null;
+        $Update = true;
+        if(file_exists($filename)){
+          $Cache = file_get_contents($filename);
+          $Cache = unserialize($Cache);
+                    
+          $Update = $Cache["Update"];
+          if(time() > $Update)
+            $Update = true;
+          else
+            $Update = false;
+          $Cache = $Cache["Table"];
+        }        
+        
+        return array($Update,$Cache);
+    }
+    
+    private function _save($filename,$rs,$timestamp){
+        $timestamp = (time() + ($timestamp*60));
+        $Cache["Update"] = $timestamp;
+        $Cache["Table"] = $rs;
+        
+        $Cache = serialize($Cache);
+                
+        $handle = fopen($filename,"w");
+        fwrite($handle,$Cache);
         fclose($handle);
- 
-	}
- 
-}
-// End of plugin
+        
+      
+    }
+
+    private function _query($data,$type=null) {
+      
+        //return $this->_debug($data);
+        
+        if(!$this->_verifyInput($data))
+          return $this->_error($this->getLang("wrong"));
+        
+        if(!is_dir($this->sPath))
+          mkdir($this->sPath);
+          
+        $filename = $this->sPath.md5($data[0].$data[1].$data[2].$data[3].$data[4].$data[5]);
+        
+        $Cache = $this->_load($filename);
+        $Update = true;
+        if(is_array($Cache)){
+          $Update = $Cache[0];
+          $Cache = $Cache[1];
+        }
+            
+        try{  
+          switch($data[0]){
+            case "mysql": $rs = $this->_mysql($data[1], $data[2], $data[3],$data[4],$data[5]); break;
+            case "mssql": $rs = $this->_mssql($data[1], $data[2], $data[3],$data[4],$data[5]); break;
+            case "oracle": $rs = $this->_oracle($data[1], $data[2], $data[3],$data[4],$data[5]); break;
+            case "sqlite": $rs = $this->_sqlite($data[1], $data[2], $data[3],$data[4],$data[5]); break;
+            case "sqlaccess": $rs = $this->_sqlaccess($data[1], $data[2], $data[3],$data[4],$data[5]); break;
+            case "postgresql": $rs = $this->_postgresql($data[1], $data[2], $data[3],$data[4],$data[5]); break;
+            case "sqlcsv": $rs = $this->_sqlcsv($data[1], $data[2], $data[3],$data[4],$data[5]); break;
+            default: return $this->_error($this->getLang("nohandler"));
+          }
+        }catch(Exception $ex){
+          $sResponse = $this->_error($this->getLang("problem"));
+          if(isset($Cache)){
+            $sResponse = $this->_print($Cache);    
+            $sResponse .= $this->_error($this->getLang("cache"));
+          }
+          return $sResponse;
+        }
+        
+        if ($rs === false){
+          return $this->_error($this->getLang("empty") );
+        }
+        
+        if(isset($type) && $type == "csv")
+          return $this->array2csv($rs);
+        
+        if($this->getConf('show_diffs') == 1) {  
+            $difference = $this->_difference($Cache,$rs);
+            $sResponse = $difference[0];
+            $sResponse .= $difference[1];
+        } else {
+            $sResponse = $this->_print($rs);
+        }
+        
+        if($Update && isset($rs)){
+          $this->_save($filename,$rs,$data[6]);
+        }
+        
+        return $sResponse;
+    }
+
+    private function _print($array){
+      
+        $i = 0;
+        
+        $th = "";
+        $td = "";
+        $tr = "";
+        if(!isset($array[0]))
+          return $this->_error($this->getLang("problem"));
+          
+        $temp = array_keys($array[0]);
+        foreach($temp as $column){
+          if($column == "type")
+            continue;  
+          $th .= str_replace(array("%number%","%text%","%type%"),array(0,$column,""),$this->aMessages["th"]);
+        }
+        $tr = str_replace(array("%number%","%text%","%type%"),array(0,$th,""),$this->aMessages["tr"]);
+          
+        foreach($array as $row) {
+          
+          $j = 0;
+          $td = "";
+          if(!isset($row["type"]))
+            $row["type"] = $this->aMessages["same"];
+            
+          foreach($row as $key => $Value){
+            if($key == "type")
+              continue;
+            $td .= str_replace(array("%number%","%text%","%type%"),array($j,$Value,$row["type"]),$this->aMessages["td"]);
+            $j++;
+          }
+          $tr .= str_replace(array("%number%","%text%","%type%"),array($i,$td,$row["type"]),$this->aMessages["tr"]);
+          $i++;
+        }
+        
+        $sResponse = $this->aMessages["pre"];
+        $sResponse .= $tr;
+        $sResponse .= $this->aMessages["post"];
+        
+        return $sResponse;
+      
+    }
+
+    private function _difference($Cache,$New){
+             
+            if($New == $Cache){
+              return array($this->_print($New),"");
+              return array($this->_print($New),$this->_message($this->getLang("same")));
+            }
+
+            if(!isset($New) && isset($Cache))
+              return array($this->_print($Cache),$this->_message($this->getLang("difference")));
+
+            if(isset($New) && !isset($Cache))
+              return array($this->_print($New),$this->_message($this->getLang("first")));
+
+            if(count($New) <= 0)
+              return array($this->_print($Cache),$this->_message($this->getLang("connection")));
+
+            $Max = count($Cache);
+            if(count($New) > count($Cache))
+              $Max = count($New);
+            
+            $PrintArray = array();
+
+            for($i=0; $i < $Max; $i++){
+              if(isset($Cache[$i]) && !isset($New[$i]))
+                $PrintArray[] = array_merge($Cache[$i],array("type" => $this->aMessages["deleted"]));
+
+              if(!isset($Cache[$i]) && isset($New[$i]))
+                $PrintArray[] = array_merge($New[$i],array("type" => $this->aMessages["new"]));
+
+              if(isset($Cache[$i]) && isset($New[$i])){
+                if($Cache[$i] != $New[$i]){
+                  $PrintArray[] = array_merge($Cache[$i],array("type" => $this->aMessages["changed"]));
+                  $PrintArray[] = array_merge($New[$i],array("type" => $this->aMessages["changed"]));
+                }else
+                  $PrintArray[] = array_merge($New[$i],array("type" => $this->aMessages["same"]));
+
+              }
+              
+            }
+
+            return array($this->_print($PrintArray),$this->_message($this->getLang("difference")));
+      
+    }
+
+    private function _sqlaccess($Server,$User,$Pass,$Database,$Query){
+                  
+        if(!$connection = odbc_connect("DRIVER={Microsoft Access Driver (*.mdb)}; DBQ=$Database", "ADODB.Connection", $Pass, "SQL_CUR_USE_ODBC") or false)
+          throw new Exception($this->getLang("problem"));
+
+        $rs = odbc_exec($connection,$Query);
+
+        $dbArray = array();
+        while ($row = odbc_fetch_array($rs))
+          $dbArray[] = $row;
+
+        odbc_close($connection);
+        return $dbArray;
+
+    }
+
+    private function _postgresql($Server,$User,$Pass,$Database,$Query){
+                  
+        if(!$connection = pg_connect("host=".$Server." dbname=".$Database." user=".$User." password=".$Pass) or false)
+          throw new Exception($this->getLang("problem"));
+          
+        $rs = pg_exec($Query);
+        $dbArray = pg_fetch_array($result, NULL, PGSQL_ASSOC);
+      
+        pg_close($connection);
+        return $dbArray;
+      
+    }
+    
+    private function _mysql($Server,$User,$Pass,$Database,$Query){
+        if(!$connection = mysqli_connect($Server, $User, $Pass) or false)
+          throw new Exception(mysqli_connect_error());
+          
+        if (!mysqli_select_db($connection, $Database))
+          throw new Exception(mysqli_error($connection));
+
+        $rs = mysqli_query($connection, $Query);
+        $dbArray = array();
+        
+        if($rs === true)
+          $dbArray[] = array( $this->getLang("affected") => mysqli_affected_rows ($connection));
+        else
+          while ($row = mysqli_fetch_assoc($rs))
+            $dbArray[] = $row;
+        
+        
+        mysqli_close($connection);
+        return $dbArray;
+      
+    }
+
+    private function _mssql($Server,$User,$Pass,$Database,$Query){
+      
+        if(!$dbhandle = mssql_connect($Server, $User, $Pass))
+          throw new Exception($this->getLang("problem"));
+          
+        mssql_select_db($Database, $dbhandle);
+        
+        $rs = mssql_query($Query);
+
+        $dbArray = array();
+        
+        if($rs === true)
+          $dbArray[] = array( $this->getLang("affected") => mssql_rows_affected ($connection));
+        else
+          while ($row = mssql_fetch_assoc($rs))
+            $dbArray[] = $row;
+
+        mssql_close($dbhandle);
+        return $dbArray;
+
+    }
+    
+    private function _oracle($Server,$User,$Pass,$Database,$Query){
+          throw new Exception($this->getLang("nohandler"));
+    }
+    
+    private function _sqlcsv($Server,$User,$Pass,$Database,$Query){  
+          
+        if(!$handle = fopen($Database,"r"))
+          throw new Exception($this->getLang("nohandler"));
+          
+        $dbArray = array();
+        $keys = fgetcsv ( $handle , 1000, $Query);
+
+        while ($row = fgetcsv ( $handle , 1000, $Query)){
+          $temprow = array();
+          foreach($row as $key => $value)
+            $temprow[$keys[$key]] = $value;
+
+          $dbArray[] = $temprow;
+
+        }
+
+        fclose($handle);
+        return $dbArray;
+
+    }
+
+    private function _sqlite($Server,$User,$Pass,$Database,$Query){
+
+        $dbHandle = new PDO('sqlite:'.$Database);
+
+        $result = $dbHandle->query($Query);
+        if(!$result)
+          throw new PDOException;
+        $dbArray = array();
+        
+        if($result->rowCount() > 0)
+          $dbArray[] = array( $this->getLang("affected") => $result->rowCount() );
+        else
+          while($row = $result->fetch(PDO::FETCH_ASSOC))
+            $dbArray[] = $row;
+          
+        return $dbArray;
+        
+    }
+
+    private function array2csv($data){
+      
+      $sResponse = "";
+      
+      $keys = array_keys($data[0]);
+      $sResponse .= implode(";",$keys)."\n";
+      foreach($data as $row)
+        $sResponse .= implode(";",$row)."\n";
+      
+      return $sResponse;
+      
+    }
+
+ }
+// vim:ts=4:sw=4:et:
