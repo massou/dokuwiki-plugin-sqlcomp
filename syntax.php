@@ -430,7 +430,27 @@ class syntax_plugin_sqlcomp extends DokuWiki_Syntax_Plugin {
     }
     
     private function _oracle($Server,$User,$Pass,$Database,$Query){
-          throw new Exception($this->getLang("nohandler"));
+        if(!$connection = oci_connect($User, $Pass, $Server) or false)
+            throw new Exception(oci_error());
+
+        // execute query
+        $rs = oci_parse($connection, $Query);
+        oci_execute($rs);
+        $dbArray = array();
+
+        if($rs === true) {
+            $dbArray[] = array($this->aString["affected"] => oci_affected_rows($connection));
+        }
+        else {
+            while($row = oci_fetch_assoc($rs)) {
+                $dbArray[] = $row;
+            }
+        }
+
+        oci_free_statement($rs);
+        oci_close($connection);
+
+        return $dbArray;
     }
     
     private function _sqlcsv($Server,$User,$Pass,$Database,$Query){  
