@@ -130,8 +130,6 @@ class syntax_plugin_sqlcomp extends DokuWiki_Syntax_Plugin {
     // SQLCOMP FUNCTONS
     //------------------------------------------------------------------------//
 
-    private $sPath = "data/cache/sql/";
-    
     /**
      * Layout
      */
@@ -219,8 +217,6 @@ class syntax_plugin_sqlcomp extends DokuWiki_Syntax_Plugin {
         $handle = fopen($filename,"w");
         fwrite($handle,$Cache);
         fclose($handle);
-        
-      
     }
 
     private function _query($data,$type=null) {
@@ -237,13 +233,14 @@ class syntax_plugin_sqlcomp extends DokuWiki_Syntax_Plugin {
 
         $Update = false;
         if($opts['refresh'] > 0) {  
-            if(!is_dir($this->sPath)) {
-                if (!@mkdir($this->sPath)) {
+            $sPath = DOKU_INC . "data/cache/sql/";
+            if(!is_dir($sPath)) {
+                if (!@mkdir($sPath)) {
                     msg($this->_error($this->getLang("cachedir")), -1);
                     return;
                 }
             }
-            $filename = $this->sPath.md5(implode('',$dbcon));
+            $filename = $sPath.md5(implode('',$dbcon));
             $Cache = $this->_load($filename);
             $Update = true;
             if(is_array($Cache)){
