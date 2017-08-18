@@ -121,7 +121,7 @@ class syntax_plugin_sqlcomp extends DokuWiki_Syntax_Plugin {
      */
     public function render($mode, Doku_Renderer $renderer, $data) {
         if($mode != 'xhtml') return false;
-        $renderer->doc .= $this->_query($data);
+        $renderer->doc .= utf8_encode($this->_query($data));
         return true;
     }
 
