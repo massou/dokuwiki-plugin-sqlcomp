@@ -21,5 +21,8 @@ $lang['cache'] = "Cache wird angezeigt, aber neue Daten konnten nicht abgerufen 
 $lang['first'] = "Der Cache wurde soeben erneuert, oder die Tabelle wurde das erste Mal abgerufen.";
 $lang['connection'] = "Die neuesten Daten konnten nicht abgerufen werden.";
 $lang['wrong'] = "Die eingegebenen Daten sind ungültig! Bitte Überprüfen!";
+$lang['syntax_dbcon'] = "Die Datenbank-Verbindungsparameter sind falsch formuliert!";
+$lang['syntax_option'] = "Unbekannte option verwendet";
+$lang['cachedir'] = "Das cache-Verzeichnis konnte nicht erstellt werden";
 
 //Setup VIM: ex: et ts=4 :

@@ -48,7 +48,7 @@ class syntax_plugin_sqlcomp extends DokuWiki_Syntax_Plugin {
         $aliases = $this->_getAliases();
         if ($aliases) {
             foreach($aliases as $name => $def) {
-                $this->Lexer->addSpecialPattern('\[\['.$name.'.*?\]\]', $mode, 'plugin_sqlcomp');
+                $this->Lexer->addSpecialPattern('\[\['.$name.'\|.*?\]\]', $mode, 'plugin_sqlcomp');
             }
         }
     }
@@ -69,28 +69,45 @@ class syntax_plugin_sqlcomp extends DokuWiki_Syntax_Plugin {
     public function handle($match, $state, $pos, Doku_Handler $handler){
         $data = array();
 
-        $temp = $match;
         $match = substr($match,2,-2);
-        $match = explode("|",$match); # DBTYPE, DBCONN, QUERY, CACHE, EXTRA
+        $match = explode("|",$match); # CONNECTION, SQL, OPTIONS
 
-        $sqlcomp = $this->_getAliases();
-        foreach($sqlcomp as $key => $value)
-          if($key == $match[0])
-            $match[0] = $value;
-            
-        $data =  explode(":",$match[0]);
-        $data[] = $match[1];
-        
-        if(isset($match[2]))
-          $data[] = $match[2];
-        else
-          $data[] = $this->getConf('default_cache_timeout');
+        // replace dbaliases with connection-string from config
+        $dbaliases = $this->_getAliases();
+        foreach($dbaliases as $key => $value) {
+            if($key == strtolower($match[0])) {
+                $match[0] = $value;
+            }
+        }
+        $con = explode(":",$match[0]); # DBTYPE, DBSERVER, DBUSER, DBPASS, DBNAME
+        if(count($con) != 5) {
+            msg($this->getLang("syntax_dbcon"), -1);
+            return;
+        }
+        $data[] = $con;
 
-        if(isset($match[3]))
-            $data[] = $match[3];
-        else
-            $data[] = $this->getConf('show_diffs');
-       
+        $data[] = $match[1]; # SQL (multiline)
+
+        $opts = array();        
+        if(isset($match[2])) {
+            // handle options
+            $o = explode("&", $match[2]);
+            foreach($o as $opt) {
+                $opt = strtolower($opt);
+                if(ctype_digit($opt)) {
+                    $opts['refresh'] = $opt;
+                }
+                else {
+                    msg($this->getLang("syntax_option").': "'.$opt.'"', -1);
+                    return;
+                }
+            }
+        } else {
+            // apply defaults
+            $opts['refresh'] = $this->getConf('default_refresh');
+        }
+        $data[] = $opts;
+
         return $data;
     }
 
@@ -123,7 +140,7 @@ class syntax_plugin_sqlcomp extends DokuWiki_Syntax_Plugin {
         "message" => "<div id=\"difference\" style=\"text-align:center; font-weight: bold; border: 2px solid #fd0;background-color: #ffd; padding: 5px; margin: 5px\">%text%</div>\n",
         "pre" => "<table class=\"inline\">\n",
         "post" => "</table>\n",
-        //"th" => "<th class=\"row%number%\" style=\"%type%\">%text%</th>",
+        #"th" => "<th class=\"row%number%\" style=\"%type%\">%text%</th>",
         "th" => "<th class=\"row%number%\" style=\"text-align:center;%type%\">%text%</th>",
         "td" => "<td class=\"col%number%\" style=\"%type%\">%text%</td>",
         "tr" => "<tr class=\"row%number%\" style=\"%type%\">%text%</tr>\n",
@@ -145,6 +162,7 @@ class syntax_plugin_sqlcomp extends DokuWiki_Syntax_Plugin {
         foreach($aliases as $rec) {
             if (substr_count($rec, '=') == 1) {
                 list($name, $def) = explode('=', trim($rec));
+                $name = strtolower($name);
                 $data[$name] = $def;
             }
         }
@@ -160,21 +178,18 @@ class syntax_plugin_sqlcomp extends DokuWiki_Syntax_Plugin {
     }
 
     private function _debug($data){
-        $sResponse = "";
-        foreach($data as $key => $value){
-            $sResponse .= "".$key . "=> " .$value ."<br/>\n";
+        $sResponse = "<pre>";
+        if (is_array($data) && !empty($data)) {
+            foreach($data as $key => $value){
+                $sResponse .= "".$key . "=> " .$value ."<br/>\n";
+            }
+        } else {
+            $sResponse .= "data IS EMPTY";
         }
+        $sResponse .= "</pre>";
         return $sResponse;
     }
 
-    private function _verifyInput($data){
-      if(!is_array($data))
-        return false;
-      if(count($data) != 8)
-        return false;
-      return true;    
-    }
-    
     private function _load($filename){
       
         $Cache = null;
@@ -209,42 +224,52 @@ class syntax_plugin_sqlcomp extends DokuWiki_Syntax_Plugin {
     }
 
     private function _query($data,$type=null) {
-      
-        //return $this->_debug($data);
+        #return $this->_debug($data);
         
-        if(!$this->_verifyInput($data))
-          return $this->_error($this->getLang("wrong"));
-        
-        if(!is_dir($this->sPath))
-          mkdir($this->sPath);
-          
-        $filename = $this->sPath.md5($data[0].$data[1].$data[2].$data[3].$data[4].$data[5]);
-        
-        $Cache = $this->_load($filename);
-        $Update = true;
-        if(is_array($Cache)){
-          $Update = $Cache[0];
-          $Cache = $Cache[1];
+        if(!is_array($data) || count($data) != 3) {
+            msg($this->_error($this->getLang("wrong")), -1);
+            return;
         }
-            
+
+        $dbcon = $data[0];
+        $sql = $data[1];
+        $opts = $data[2];
+
+        $Update = false;
+        if($opts['refresh'] > 0) {  
+            if(!is_dir($this->sPath)) {
+                if (!@mkdir($this->sPath)) {
+                    msg($this->_error($this->getLang("cachedir")), -1);
+                    return;
+                }
+            }
+            $filename = $this->sPath.md5(implode('',$dbcon));
+            $Cache = $this->_load($filename);
+            $Update = true;
+            if(is_array($Cache)){
+              $Update = $Cache[0];
+              $Cache = $Cache[1];
+            }
+        }
+                
         try{  
-          switch($data[0]){
-            case "mysql": $rs = $this->_mysql($data[1], $data[2], $data[3],$data[4],$data[5]); break;
-            case "mssql": $rs = $this->_mssql($data[1], $data[2], $data[3],$data[4],$data[5]); break;
-            case "oracle": $rs = $this->_oracle($data[1], $data[2], $data[3],$data[4],$data[5]); break;
-            case "sqlite": $rs = $this->_sqlite($data[1], $data[2], $data[3],$data[4],$data[5]); break;
-            case "sqlaccess": $rs = $this->_sqlaccess($data[1], $data[2], $data[3],$data[4],$data[5]); break;
-            case "postgresql": $rs = $this->_postgresql($data[1], $data[2], $data[3],$data[4],$data[5]); break;
-            case "sqlcsv": $rs = $this->_sqlcsv($data[1], $data[2], $data[3],$data[4],$data[5]); break;
-            default: return $this->_error($this->getLang("nohandler"));
+          switch($dbcon[0]){
+            case "mysql": $rs = $this->_mysql($dbcon[1], $dbcon[2], $dbcon[3], $dbcon[4], $sql, $opts); break;
+            case "mssql": $rs = $this->_mssql($dbcon[1], $dbcon[2], $dbcon[3], $dbcon[4], $sql, $opts); break;
+            case "oracle": $rs = $this->_oracle($dbcon[1], $dbcon[2], $dbcon[3], $dbcon[4], $sql, $opts); break;
+            case "sqlite": $rs = $this->_sqlite($dbcon[1], $dbcon[2], $dbcon[3], $dbcon[4], $sql, $opts); break;
+            case "sqlaccess": $rs = $this->_sqlaccess($dbcon[1], $dbcon[2], $dbcon[3], $dbcon[4], $sql, $opts); break;
+            case "postgresql": $rs = $this->_postgresql($dbcon[1], $dbcon[2], $dbcon[3], $dbcon[4], $sql, $opts); break;
+            case "sqlcsv": $rs = $this->_sqlcsv($dbcon[1], $dbcon[2], $dbcon[3], $dbcon[4], $sql, $opts); break;
+            default: msg($this->_error($this->getLang("nohandler")), -1); return;
           }
         }catch(Exception $ex){
-          $sResponse = $this->_error($this->getLang("problem"));
+          msg($this->_error($this->getLang("problem")), -1);
           if(isset($Cache)){
-            $sResponse = $this->_print($Cache);    
-            $sResponse .= $this->_error($this->getLang("cache"));
+            msg($this->_error($this->getLang("cache")), -1);
+            return($this->_print($Cache));
           }
-          return $sResponse;
+          return;
         }
         
         if ($rs === false){
@@ -254,7 +279,7 @@ class syntax_plugin_sqlcomp extends DokuWiki_Syntax_Plugin {
         if(isset($type) && $type == "csv")
           return $this->array2csv($rs);
         
-        if($this->getConf('show_diffs') == 1) {  
+        if($opts['refresh'] > 0) {  
             $difference = $this->_difference($Cache,$rs);
             $sResponse = $difference[0];
             $sResponse .= $difference[1];
@@ -262,8 +287,10 @@ class syntax_plugin_sqlcomp extends DokuWiki_Syntax_Plugin {
             $sResponse = $this->_print($rs);
         }
         
-        if($Update && isset($rs)){
-          $this->_save($filename,$rs,$data[6]);
+        if($opts['refresh'] > 0) {  
+            if($Update && isset($rs)){
+              $this->_save($filename,$rs,$data[6]);
+            }
         }
         
         return $sResponse;
@@ -314,49 +341,48 @@ class syntax_plugin_sqlcomp extends DokuWiki_Syntax_Plugin {
 
     private function _difference($Cache,$New){
              
-            if($New == $Cache){
-              return array($this->_print($New),"");
-              return array($this->_print($New),$this->_message($this->getLang("same")));
+        if($New == $Cache){
+          return array($this->_print($New),"");
+          return array($this->_print($New),$this->_message($this->getLang("same")));
+        }
+
+        if(!isset($New) && isset($Cache))
+          return array($this->_print($Cache),$this->_message($this->getLang("difference")));
+
+        if(isset($New) && !isset($Cache))
+          return array($this->_print($New),$this->_message($this->getLang("first")));
+
+        if(count($New) <= 0)
+          return array($this->_print($Cache),$this->_message($this->getLang("connection")));
+
+        $Max = count($Cache);
+        if(count($New) > count($Cache))
+          $Max = count($New);
+        
+        $PrintArray = array();
+
+        for($i=0; $i < $Max; $i++){
+          if(isset($Cache[$i]) && !isset($New[$i]))
+            $PrintArray[] = array_merge($Cache[$i],array("type" => $this->aMessages["deleted"]));
+
+          if(!isset($Cache[$i]) && isset($New[$i]))
+            $PrintArray[] = array_merge($New[$i],array("type" => $this->aMessages["new"]));
+
+          if(isset($Cache[$i]) && isset($New[$i])){
+            if($Cache[$i] != $New[$i]){
+              $PrintArray[] = array_merge($Cache[$i],array("type" => $this->aMessages["changed"]));
+              $PrintArray[] = array_merge($New[$i],array("type" => $this->aMessages["changed"]));
+            }else{
+              $PrintArray[] = array_merge($New[$i],array("type" => $this->aMessages["same"]));
             }
+          }
+          
+        }
 
-            if(!isset($New) && isset($Cache))
-              return array($this->_print($Cache),$this->_message($this->getLang("difference")));
-
-            if(isset($New) && !isset($Cache))
-              return array($this->_print($New),$this->_message($this->getLang("first")));
-
-            if(count($New) <= 0)
-              return array($this->_print($Cache),$this->_message($this->getLang("connection")));
-
-            $Max = count($Cache);
-            if(count($New) > count($Cache))
-              $Max = count($New);
-            
-            $PrintArray = array();
-
-            for($i=0; $i < $Max; $i++){
-              if(isset($Cache[$i]) && !isset($New[$i]))
-                $PrintArray[] = array_merge($Cache[$i],array("type" => $this->aMessages["deleted"]));
-
-              if(!isset($Cache[$i]) && isset($New[$i]))
-                $PrintArray[] = array_merge($New[$i],array("type" => $this->aMessages["new"]));
-
-              if(isset($Cache[$i]) && isset($New[$i])){
-                if($Cache[$i] != $New[$i]){
-                  $PrintArray[] = array_merge($Cache[$i],array("type" => $this->aMessages["changed"]));
-                  $PrintArray[] = array_merge($New[$i],array("type" => $this->aMessages["changed"]));
-                }else
-                  $PrintArray[] = array_merge($New[$i],array("type" => $this->aMessages["same"]));
-
-              }
-              
-            }
-
-            return array($this->_print($PrintArray),$this->_message($this->getLang("difference")));
-      
+        return array($this->_print($PrintArray),$this->_message($this->getLang("difference")));
     }
 
-    private function _sqlaccess($Server,$User,$Pass,$Database,$Query){
+    private function _sqlaccess($Server,$User,$Pass,$Database,$Query,$Opts){
                   
         if(!$connection = odbc_connect("DRIVER={Microsoft Access Driver (*.mdb)}; DBQ=$Database", "ADODB.Connection", $Pass, "SQL_CUR_USE_ODBC") or false)
           throw new Exception($this->getLang("problem"));
@@ -372,7 +398,7 @@ class syntax_plugin_sqlcomp extends DokuWiki_Syntax_Plugin {
 
     }
 
-    private function _postgresql($Server,$User,$Pass,$Database,$Query){
+    private function _postgresql($Server,$User,$Pass,$Database,$Query,$Opts){
                   
         if(!$connection = pg_connect("host=".$Server." dbname=".$Database." user=".$User." password=".$Pass) or false)
           throw new Exception($this->getLang("problem"));
@@ -385,7 +411,7 @@ class syntax_plugin_sqlcomp extends DokuWiki_Syntax_Plugin {
       
     }
     
-    private function _mysql($Server,$User,$Pass,$Database,$Query){
+    private function _mysql($Server,$User,$Pass,$Database,$Query,$Opts){
         if(!$connection = mysqli_connect($Server, $User, $Pass) or false)
           throw new Exception(mysqli_connect_error());
           
@@ -407,7 +433,7 @@ class syntax_plugin_sqlcomp extends DokuWiki_Syntax_Plugin {
       
     }
 
-    private function _mssql($Server,$User,$Pass,$Database,$Query){
+    private function _mssql($Server,$User,$Pass,$Database,$Query,$Opts){
       
         if(!$dbhandle = mssql_connect($Server, $User, $Pass))
           throw new Exception($this->getLang("problem"));
@@ -429,7 +455,7 @@ class syntax_plugin_sqlcomp extends DokuWiki_Syntax_Plugin {
 
     }
     
-    private function _oracle($Server,$User,$Pass,$Database,$Query){
+    private function _oracle($Server,$User,$Pass,$Database,$Query,$Opts){
         if(!$connection = oci_connect($User, $Pass, $Server) or false)
             throw new Exception(oci_error());
 
@@ -453,7 +479,7 @@ class syntax_plugin_sqlcomp extends DokuWiki_Syntax_Plugin {
         return $dbArray;
     }
     
-    private function _sqlcsv($Server,$User,$Pass,$Database,$Query){  
+    private function _sqlcsv($Server,$User,$Pass,$Database,$Query,$Opts){
           
         if(!$handle = fopen($Database,"r"))
           throw new Exception($this->getLang("nohandler"));
@@ -475,7 +501,7 @@ class syntax_plugin_sqlcomp extends DokuWiki_Syntax_Plugin {
 
     }
 
-    private function _sqlite($Server,$User,$Pass,$Database,$Query){
+    private function _sqlite($Server,$User,$Pass,$Database,$Query,$Opts){
 
         $dbHandle = new PDO('sqlite:'.$Database);
 
