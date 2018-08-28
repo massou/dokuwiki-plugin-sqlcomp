@@ -39,6 +39,7 @@ class syntax_plugin_sqlcomp extends DokuWiki_Syntax_Plugin {
 //        $this->Lexer->addEntryPattern('<FIXME>',$mode,'plugin_sqlcomp');
         $this->Lexer->addSpecialPattern('\[\[mysql\:.*?\]\]', $mode, 'plugin_sqlcomp');
         $this->Lexer->addSpecialPattern('\[\[mssql\:.*?\]\]', $mode, 'plugin_sqlcomp');
+        $this->Lexer->addSpecialPattern('\[\[sqlsrv\:.*?\]\]', $mode, 'plugin_sqlcomp');	    
         $this->Lexer->addSpecialPattern('\[\[oracle\:.*?\]\]', $mode, 'plugin_sqlcomp');
         $this->Lexer->addSpecialPattern('\[\[sqlite\:.*?\]\]', $mode, 'plugin_sqlcomp');
         $this->Lexer->addSpecialPattern('\[\[sqlaccess\:.*?\]\]', $mode, 'plugin_sqlcomp');
@@ -252,7 +253,8 @@ class syntax_plugin_sqlcomp extends DokuWiki_Syntax_Plugin {
         try{  
           switch($dbcon[0]){
             case "mysql": $rs = $this->_mysql($dbcon[1], $dbcon[2], $dbcon[3], $dbcon[4], $sql, $opts); break;
-            case "mssql": $rs = $this->_mssql($dbcon[1], $dbcon[2], $dbcon[3], $dbcon[4], $sql, $opts); break;
+            case "mssql": $rs = $this->_mssql($dbcon[1], $dbcon[2], $dbcon[3], $dbcon[4], $sql, $opts); break;           
+	    case "sqlsrv": $rs = $this->_sqlsrv($dbcon[1], $dbcon[2], $dbcon[3], $dbcon[4], $sql, $opts); break;
             case "oracle": $rs = $this->_oracle($dbcon[1], $dbcon[2], $dbcon[3], $dbcon[4], $sql, $opts); break;
             case "sqlite": $rs = $this->_sqlite($dbcon[1], $dbcon[2], $dbcon[3], $dbcon[4], $sql, $opts); break;
             case "sqlaccess": $rs = $this->_sqlaccess($dbcon[1], $dbcon[2], $dbcon[3], $dbcon[4], $sql, $opts); break;
@@ -451,7 +453,52 @@ class syntax_plugin_sqlcomp extends DokuWiki_Syntax_Plugin {
         return $dbArray;
 
     }
-    
+
+    private function _sqlsrv($Server,$User,$Pass,$Database,$Query,$Opts){
+ 
+		/*
+		Connect to the local server using Windows Authentication and specify
+		the AdventureWorks database as the database in use. To connect using
+		SQL Server Authentication, set values for the "UID" and "PWD"
+		 attributes in the $connectionInfo parameter. For example:
+		$connectionInfo = array("UID" => $uid, "PWD" => $pwd, "Database"=>"AdventureWorks");
+		*/
+	$serverName = $Server;
+	$connectionInfo = array( 
+			"Database" => $Database,
+			"Uid" => $User,
+			"PWD" => $Pass,
+			);
+	$conn = sqlsrv_connect( $serverName, $connectionInfo);
+
+	if( $conn )
+	{
+		//  echo "Connection established.\n";
+	}
+	else
+	{
+		 throw new Exception($this->getLang("problem mssql_connect ? ".print_r( sqlsrv_errors(), true) ));
+		// die( print_r( sqlsrv_errors(), true));
+	}
+ 
+		//-----------------------------------------------
+		// Perform operations with connection.
+		//-----------------------------------------------
+ 
+	$stmt = sqlsrv_query( $conn, $Query);
+	$dbArray = array();
+ 
+	if($stmt=== true) {
+		$dbArray[] = array( $this->getLang("affected") => sqlsrv_rows_affected ($stmt));
+	} else {
+	while ($row = sqlsrv_fetch_array($stmt, SQLSRV_FETCH_ASSOC))
+		$dbArray[] =  $row;
+	}
+		/* Close the connection. */
+		sqlsrv_close($conn);
+		return $dbArray;
+    }
+ 
     private function _oracle($Server,$User,$Pass,$Database,$Query,$Opts){
         if(!$connection = oci_connect($User, $Pass, $Server) or false)
             throw new Exception(oci_error());
